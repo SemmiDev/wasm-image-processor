@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Go WASM Image Processor</title>
+  <style>
+    :root {
+      --bg: #0f0f11;
+      --surface: #1a1a1f;
+      --border: #2a2a35;
+      --accent: #6ee7b7;
+      --accent2: #818cf8;
+      --text: #e2e2e9;
+      --muted: #6b6b7b;
+      --danger: #f87171;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-badge {
+      background: linear-gradient(135deg, #6ee7b7 0%, #818cf8 100%);
+      color: #0f0f11;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 4px;
+      letter-spacing: 0.05em;
+    }
+
+    h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-left: auto;
+    }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--danger);
+      transition: background 0.4s;
+    }
+    .status-dot.ready { background: var(--accent); }
+
+    /* === LAYOUT === */
+    .app-grid {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    /* === SIDEBAR === */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .panel-body { padding: 14px; }
+
+    /* Upload zone */
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 28px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .upload-zone:hover, .upload-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(110, 231, 183, 0.04);
+    }
+    .upload-zone .icon { font-size: 28px; margin-bottom: 8px; }
+    .upload-zone p { font-size: 12px; color: var(--muted); line-height: 1.5; }
+    .upload-zone span { color: var(--accent); }
+    #file-input { display: none; }
+
+    /* Filter buttons */
+    .filter-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .filter-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      padding: 9px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: left;
+    }
+
+    .filter-btn:hover {
+      border-color: var(--accent2);
+      background: rgba(129, 140, 248, 0.08);
+      color: var(--accent2);
+    }
+
+    .filter-btn.active {
+      border-color: var(--accent);
+      background: rgba(110, 231, 183, 0.1);
+      color: var(--accent);
+    }
+
+    .filter-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    /* Sliders */
+    .control-row {
+      margin-bottom: 14px;
+    }
+    .control-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .control-label span { color: var(--accent); }
+
+    input[type="range"] {
+      width: 100%;
+      -webkit-appearance: none;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px; height: 14px;
+      background: var(--accent);
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    /* Performance stats */
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .stat-row:last-child { border: none; }
+    .stat-row .label { color: var(--muted); }
+    .stat-row .value { color: var(--accent); font-weight: 600; }
+
+    /* Reset button */
+    .btn-reset {
+      width: 100%;
+      padding: 10px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-reset:hover {
+      border-color: var(--danger);
+      color: var(--danger);
+      background: rgba(248, 113, 113, 0.07);
+    }
+
+    /* === CANVAS AREA === */
+    .canvas-area {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .canvas-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 400px;
+      position: relative;
+    }
+
+    .canvas-placeholder {
+      text-align: center;
+      color: var(--muted);
+    }
+    .canvas-placeholder .big-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.4; }
+    .canvas-placeholder p { font-size: 13px; }
+
+    canvas {
+      max-width: 100%;
+      max-height: 520px;
+      display: none;
+      border-radius: 4px;
+    }
+
+    /* Processing overlay */
+    .processing-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(15,15,17,0.7);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      backdrop-filter: blur(4px);
+    }
+    .processing-overlay.show { display: flex; }
+
+    .spinner {
+      width: 32px; height: 32px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .processing-label { font-size: 12px; color: var(--accent); }
+
+    /* Code display */
+    .code-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .code-panel pre {
+      padding: 14px;
+      font-size: 11px;
+      line-height: 1.7;
+      overflow-x: auto;
+      color: var(--muted);
+    }
+    .code-panel .keyword { color: #f472b6; }
+    .code-panel .func    { color: var(--accent2); }
+    .code-panel .string  { color: var(--accent); }
+    .code-panel .comment { color: #4a4a5a; }
+
+    .loading-wasm {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .loading-wasm .spinner { margin: 0 auto 16px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-badge">GO WASM</div>
+    <h1>Image Processor</h1>
+  </div>
+  <div class="status-bar">
+    <div class="status-dot" id="wasm-dot"></div>
+    <span id="wasm-status">Loading WASM...</span>
+  </div>
+</header>
+
+<div class="app-grid">
+
+  <!-- ============================================================ -->
+  <!--  SIDEBAR                                                      -->
+  <!-- ============================================================ -->
+  <div class="sidebar">
+
+    <!-- Upload -->
+    <div class="panel">
+      <div class="panel-header">// input</div>
+      <div class="panel-body">
+        <div class="upload-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+          <div class="icon">📁</div>
+          <p>Drop image here or<br><span>click to browse</span></p>
+        </div>
+        <input type="file" id="file-input" accept="image/*">
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="panel">
+      <div class="panel-header">// filters (go functions)</div>
+      <div class="panel-body">
+        <div class="filter-grid">
+          <button class="filter-btn" id="btn-original" onclick="applyFilter('original')" disabled>
+            ⬜ Original
+          </button>
+          <button class="filter-btn" id="btn-grayscale" onclick="applyFilter('grayscale')" disabled>
+            🌑 Grayscale
+          </button>
+          <button class="filter-btn" id="btn-invert" onclick="applyFilter('invert')" disabled>
+            🔄 Invert
+          </button>
+          <button class="filter-btn" id="btn-edge" onclick="applyFilter('edge')" disabled>
+            ✏️ Edge Detect
+          </button>
+          <button class="filter-btn" id="btn-pixelate" onclick="applyFilter('pixelate')" disabled>
+            🟦 Pixelate
+          </button>
+          <button class="filter-btn" id="btn-bright" onclick="applyFilter('brightness')" disabled>
+            ☀️ Brightness
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="panel" id="controls-panel" style="display:none">
+      <div class="panel-header">// parameters</div>
+      <div class="panel-body">
+        <div class="control-row" id="ctrl-brightness" style="display:none">
+          <div class="control-label">brightness <span id="bright-val">0</span></div>
+          <input type="range" id="brightness-slider" min="-100" max="100" value="0"
+            oninput="document.getElementById('bright-val').textContent=this.value; applyFilter('brightness')">
+        </div>
+        <div class="control-row" id="ctrl-pixelate" style="display:none">
+          <div class="control-label">block size <span id="pixel-val">12</span>px</div>
+          <input type="range" id="pixel-slider" min="4" max="48" value="12"
+            oninput="document.getElementById('pixel-val').textContent=this.value; applyFilter('pixelate')">
+        </div>
+      </div>
+    </div>
+
+    <!-- Performance Stats -->
+    <div class="panel">
+      <div class="panel-header">// performance</div>
+      <div class="panel-body">
+        <div class="stat-row">
+          <span class="label">last process time</span>
+          <span class="value" id="stat-time">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="label">image dimensions</span>
+          <span class="value" id="stat-dims">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="label">pixel count</span>
+          <span class="value" id="stat-pixels">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="label">active filter</span>
+          <span class="value" id="stat-filter">none</span>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn-reset" id="btn-reset" onclick="resetApp()" style="display:none">
+      ↺ Reset / Load New Image
+    </button>
+
+  </div>
+
+  <!-- ============================================================ -->
+  <!--  CANVAS AREA                                                  -->
+  <!-- ============================================================ -->
+  <div class="canvas-area">
+
+    <div class="canvas-container" id="canvas-container">
+      <!-- Placeholder saat belum ada gambar -->
+      <div class="canvas-placeholder" id="placeholder">
+        <div class="big-icon">🖼️</div>
+        <p>Upload an image to start<br>processing with Go WASM</p>
+      </div>
+
+      <!-- Loading WASM indicator -->
+      <div class="loading-wasm" id="loading-wasm" style="display:none">
+        <div class="spinner"></div>
+        <p>Initializing Go WASM runtime...</p>
+      </div>
+
+      <!-- Processing overlay -->
+      <div class="processing-overlay" id="processing-overlay">
+        <div class="spinner"></div>
+        <div class="processing-label">Processing in Go WASM...</div>
+      </div>
+
+      <canvas id="main-canvas"></canvas>
+    </div>
+
+    <!-- Code snippet panel: menampilkan kode Go yang sedang berjalan -->
+    <div class="code-panel" id="code-panel" style="display:none">
+      <div class="panel-header">// go source — what's running in wasm</div>
+      <pre id="code-display"></pre>
+    </div>
+
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!--  STEP 1: Load wasm_exec.js — Go's official WASM bridge           -->
+<!--  File ini wajib ada dan harus dimuat SEBELUM kita load .wasm     -->
+<!-- ================================================================ -->
+<script src="wasm_exec.js"></script>
+
+<script>
+// ================================================================
+// KONSEP: Cara Go WASM berjalan di browser
+//
+// 1. Buat instance Go() dari wasm_exec.js
+// 2. Fetch file .wasm dari server
+// 3. Compile dengan WebAssembly.instantiateStreaming()
+// 4. Jalankan instance Go dengan go.run(instance)
+// 5. Go akan memanggil js.Global().Call("onGoWasmReady") saat siap
+// ================================================================
+
+let originalImageData = null;
+let currentCanvas = document.getElementById('main-canvas');
+let ctx = currentCanvas.getContext('2d');
+let wasmReady = false;
+let currentFilter = 'original';
+
+// Fungsi callback yang akan dipanggil oleh Go saat WASM siap
+window.onGoWasmReady = function() {
+  wasmReady = true;
+  document.getElementById('wasm-dot').classList.add('ready');
+  document.getElementById('wasm-status').textContent = 'WASM Ready';
+  document.getElementById('loading-wasm').style.display = 'none';
+  console.log('[WASM] Go runtime initialized successfully');
+};
+
+// Load dan jalankan WASM
+async function initWasm() {
+  try {
+    const go = new Go(); // Dari wasm_exec.js
+
+    // WebAssembly.instantiateStreaming adalah cara paling efisien
+    // karena bisa mulai compile sambil download berlanjut (streaming)
+    const result = await WebAssembly.instantiateStreaming(
+      fetch('main.wasm'),
+      go.importObject // importObject berisi semua "syscall" yang butuh Go
+    );
+
+    // go.run() tidak menunggu WASM selesai — ia berjalan async
+    // Go main() kita memblokir via channel, jadi ini OK
+    go.run(result.instance);
+  } catch (err) {
+    console.error('[WASM] Failed to load:', err);
+    document.getElementById('wasm-status').textContent = 'WASM Load Failed';
+    document.getElementById('loading-wasm').innerHTML =
+      '<p style="color:var(--danger)">⚠️ Failed to load WASM.<br>Run a local server (see README)</p>';
+  }
+}
+
+// ============================================================
+// IMAGE UPLOAD HANDLING
+// ============================================================
+
+document.getElementById('file-input').addEventListener('change', handleFileSelect);
+
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadImageFile(file);
+});
+
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) loadImageFile(file);
+}
+
+function loadImageFile(file) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const img = new Image();
+    img.onload = function() {
+      // Gambar → Canvas
+      currentCanvas.width = img.width;
+      currentCanvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+
+      // Simpan data asli untuk di-reset nanti
+      originalImageData = ctx.getImageData(0, 0, img.width, img.height);
+
+      // Update UI
+      document.getElementById('placeholder').style.display = 'none';
+      currentCanvas.style.display = 'block';
+      document.getElementById('canvas-container').style.minHeight = 'auto';
+
+      // Aktifkan semua tombol filter
+      document.querySelectorAll('.filter-btn').forEach(b => b.disabled = false);
+      document.getElementById('btn-reset').style.display = 'block';
+      document.getElementById('code-panel').style.display = 'block';
+
+      // Update stats
+      document.getElementById('stat-dims').textContent = `${img.width} × ${img.height}`;
+      document.getElementById('stat-pixels').textContent =
+        (img.width * img.height).toLocaleString();
+
+      applyFilter('original');
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ============================================================
+// FILTER APPLICATION
+// Ini adalah inti dari komunikasi JS ↔ Go WASM
+// ============================================================
+
+const codeSnippets = {
+  original: `<span class="comment">// Tidak ada filter — tampilkan gambar asli</span>
+<span class="keyword">func</span> <span class="func">resetToOriginal</span>() {
+    ctx.putImageData(originalImageData, 0, 0)
+}`,
+  grayscale: `<span class="comment">// Perceptual grayscale: Y = 0.299R + 0.587G + 0.114B</span>
+<span class="keyword">func</span> <span class="func">grayscale</span>(<span class="keyword">this</span> js.Value, args []js.Value) <span class="keyword">interface</span>{} {
+    <span class="keyword">for</span> i := 0; i &lt; length; i += 4 {
+        gray := <span class="keyword">uint8</span>(0.299*R + 0.587*G + 0.114*B)
+        data[i], data[i+1], data[i+2] = gray, gray, gray
+    }
+}`,
+  invert: `<span class="comment">// Invert: nilai_baru = 255 - nilai_lama</span>
+<span class="keyword">func</span> <span class="func">invert</span>(<span class="keyword">this</span> js.Value, args []js.Value) <span class="keyword">interface</span>{} {
+    <span class="keyword">for</span> i := 0; i &lt; length; i += 4 {
+        data[i]   = 255 - data[i]   <span class="comment">// R</span>
+        data[i+1] = 255 - data[i+1] <span class="comment">// G</span>
+        data[i+2] = 255 - data[i+2] <span class="comment">// B</span>
+    }
+}`,
+  brightness: `<span class="comment">// Brightness: clamp(channel + amount)</span>
+<span class="keyword">func</span> <span class="func">adjustBrightness</span>(<span class="keyword">this</span> js.Value, args []js.Value) <span class="keyword">interface</span>{} {
+    amount := args[1].<span class="func">Int</span>() <span class="comment">// dari JS slider</span>
+    <span class="keyword">for</span> i := 0; i &lt; length; i += 4 {
+        data[i]   = clamp(<span class="keyword">int</span>(data[i])   + amount)
+        data[i+1] = clamp(<span class="keyword">int</span>(data[i+1]) + amount)
+        data[i+2] = clamp(<span class="keyword">int</span>(data[i+2]) + amount)
+    }
+}`,
+  edge: `<span class="comment">// Sobel edge detection — gradien X dan Y</span>
+sobelX := [3][3]<span class="keyword">int</span>{{-1,0,1},{-2,0,2},{-1,0,1}}
+sobelY := [3][3]<span class="keyword">int</span>{{-1,-2,-1},{0,0,0},{1,2,1}}
+<span class="keyword">for</span> y := 1; y &lt; height-1; y++ {
+    <span class="keyword">for</span> x := 1; x &lt; width-1; x++ {
+        magnitude := <span class="func">sqrtApprox</span>(gx*gx + gy*gy)
+    }
+}`,
+  pixelate: `<span class="comment">// Pixelate: rata-ratakan warna per blok NxN</span>
+<span class="keyword">func</span> <span class="func">pixelate</span>(..., blockSize <span class="keyword">int</span>) {
+    <span class="keyword">for</span> y := 0; y &lt; height; y += blockSize {
+        <span class="keyword">for</span> x := 0; x &lt; width; x += blockSize {
+            avg := averageColorInBlock(x, y, blockSize)
+            fillBlock(x, y, blockSize, avg)
+        }
+    }
+}`
+};
+
+function applyFilter(filterName) {
+  if (!originalImageData) return;
+
+  currentFilter = filterName;
+
+  // Update active button state
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + filterName)?.classList.add('active');
+
+  // Show/hide parameter controls
+  document.getElementById('controls-panel').style.display = 'none';
+  document.getElementById('ctrl-brightness').style.display = 'none';
+  document.getElementById('ctrl-pixelate').style.display = 'none';
+
+  if (filterName === 'brightness' || filterName === 'pixelate') {
+    document.getElementById('controls-panel').style.display = 'block';
+    document.getElementById('ctrl-' + filterName).style.display = 'block';
+  }
+
+  // Update code snippet
+  document.getElementById('code-display').innerHTML = codeSnippets[filterName] || '';
+  document.getElementById('stat-filter').textContent = filterName;
+
+  if (!wasmReady) {
+    console.warn('[WASM] Runtime not ready yet');
+    return;
+  }
+
+  // === INTI: Panggil fungsi Go dari JavaScript ===
+  // Kita reset ke gambar asli dulu, lalu ambil ImageData segar
+  ctx.putImageData(originalImageData, 0, 0);
+
+  if (filterName === 'original') {
+    document.getElementById('stat-time').textContent = '—';
+    return;
+  }
+
+  // Show processing overlay untuk filter berat
+  const overlay = document.getElementById('processing-overlay');
+  if (filterName === 'edge') overlay.classList.add('show');
+
+  // requestAnimationFrame memastikan browser sempat render overlay
+  requestAnimationFrame(() => {
+    const startTime = performance.now();
+
+    // Ambil pixel data dari canvas
+    const imageData = ctx.getImageData(
+      0, 0, currentCanvas.width, currentCanvas.height
+    );
+
+    try {
+      // === PEMANGGILAN FUNGSI GO ===
+      // Fungsi-fungsi ini sudah kita daftarkan di Go dengan:
+      // js.Global().Set("goXxx", js.FuncOf(xxx))
+      //
+      // Uint8ClampedArray dari imageData.data langsung dilewatkan ke Go.
+      // Go membaca dan menulis kembali ke array yang SAMA (in-place).
+      switch(filterName) {
+        case 'grayscale':
+          window.goGrayscale(imageData.data);
+          break;
+        case 'invert':
+          window.goInvert(imageData.data);
+          break;
+        case 'brightness':
+          const bVal = parseInt(document.getElementById('brightness-slider').value);
+          window.goAdjustBrightness(imageData.data, bVal);
+          break;
+        case 'edge':
+          window.goEdgeDetect(imageData.data, currentCanvas.width, currentCanvas.height);
+          break;
+        case 'pixelate':
+          const pSize = parseInt(document.getElementById('pixel-slider').value);
+          window.goPixelate(imageData.data, currentCanvas.width, currentCanvas.height, pSize);
+          break;
+      }
+
+      // Tulis kembali data yang sudah diproses ke canvas
+      ctx.putImageData(imageData, 0, 0);
+
+      const elapsed = performance.now() - startTime;
+      document.getElementById('stat-time').textContent = elapsed.toFixed(2) + ' ms';
+    } catch (err) {
+      console.error('[Filter Error]', err);
+    } finally {
+      overlay.classList.remove('show');
+    }
+  });
+}
+
+function resetApp() {
+  originalImageData = null;
+  currentCanvas.style.display = 'none';
+  document.getElementById('placeholder').style.display = 'block';
+  document.getElementById('canvas-container').style.minHeight = '400px';
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.disabled = true;
+    b.classList.remove('active');
+  });
+  document.getElementById('btn-reset').style.display = 'none';
+  document.getElementById('code-panel').style.display = 'none';
+  document.getElementById('controls-panel').style.display = 'none';
+  document.getElementById('stat-time').textContent = '—';
+  document.getElementById('stat-dims').textContent = '—';
+  document.getElementById('stat-pixels').textContent = '—';
+  document.getElementById('stat-filter').textContent = 'none';
+  document.getElementById('file-input').value = '';
+}
+
+// Start!
+initWasm();
+</script>
+</body>
+</html>
